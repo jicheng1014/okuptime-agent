@@ -7,7 +7,7 @@ Okuptime 用户 API 的 Go 命令行客户端。需要 Go 1.26。第一版管理
 ```sh
 git clone https://github.com/jicheng1014/okuptime-agent.git
 cd okuptime-agent
-go install ./cmd/okuptime
+make install
 okuptime config set-token
 okuptime project list
 okuptime monitor add --project-id 1 --interval 600 --description 首页 https://example.com
@@ -21,3 +21,5 @@ okuptime monitor check 1
 `--json` 可放在任意位置；成功时保留 API 的 `data` 与 `next_cursor`，API 错误时输出 `error.code`、`error.message` 和可能存在的 `error.details`，并以非零状态退出。列表每页最多 100 条，按返回的 `next_cursor` 使用 `--after-id` 获取下一页。
 
 默认连接 `https://www.okuptime.com`。本地开发可设置 `OKUPTIME_BASE_URL=http://localhost:3000`；远程地址必须使用 HTTPS。`monitor check` 仅提交重新检测，随后使用 `monitor show` 查询结果。
+
+开发命令：`make test`、`make vet`、`make build`、`make build-linux`（默认 amd64，可用 `GOARCH=arm64` 覆盖）。构建产物位于 `dist/`。
