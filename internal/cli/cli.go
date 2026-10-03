@@ -88,10 +88,14 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "list":
 		flags := newFlags("monitor list")
 		afterID := flags.Int64("after-id", 0, "上一页的 next_cursor")
-		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *afterID < 0 {
-			return usageError("用法: okuptime monitor list [--after-id ID] [--json]")
+		projectID := flags.Int64("project-id", 0, "只列出该项目的监控")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *afterID < 0 || *projectID < 0 {
+			return usageError("用法: okuptime monitor list [--project-id ID] [--after-id ID] [--json]")
 		}
 		query := url.Values{}
+		if *projectID > 0 {
+			query.Set("project_id", strconv.FormatInt(*projectID, 10))
+		}
 		if *afterID > 0 {
 			query.Set("after_id", strconv.FormatInt(*afterID, 10))
 		}
@@ -113,7 +117,11 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 			fmt.Fprintf(out, "%d\t%s\t%s\t%s\n", item.ID, item.URL, item.CheckStatus, item.UptimeStatus)
 		}
 		if response.NextCursor != nil {
-			fmt.Fprintf(errOut, "下一页: okuptime monitor list --after-id %d\n", *response.NextCursor)
+			if *projectID > 0 {
+				fmt.Fprintf(errOut, "下一页: okuptime monitor list --project-id %d --after-id %d\n", *projectID, *response.NextCursor)
+			} else {
+				fmt.Fprintf(errOut, "下一页: okuptime monitor list --after-id %d\n", *response.NextCursor)
+			}
 		}
 		return nil
 	case "add":
@@ -262,7 +270,7 @@ const usage = `okuptime - Okuptime 命令行客户端
   okuptime config set-token
   okuptime project list [--json]
   okuptime monitor add [--project-id ID] [--interval 秒] [--description 文本] URL [--json]
-  okuptime monitor list [--after-id ID] [--json]
+  okuptime monitor list [--project-id ID] [--after-id ID] [--json]
   okuptime monitor show ID [--json]
   okuptime monitor check ID [--json]
 

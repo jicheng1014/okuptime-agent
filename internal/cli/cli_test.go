@@ -51,10 +51,10 @@ func TestCLI(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"data":{"id":3,"url":"https://example.com"}}`)
 		case "GET /api/v1/monitors":
-			if r.URL.Query().Get("after_id") != "3" {
-				t.Errorf("missing cursor")
+			if r.URL.Query().Get("after_id") != "3" || r.URL.Query().Get("project_id") != "1" {
+				t.Errorf("missing project filter or cursor: %s", r.URL.RawQuery)
 			}
-			fmt.Fprint(w, `{"data":[{"id":4,"url":"https://example.com","check_status":"ok"}],"next_cursor":null}`)
+			fmt.Fprint(w, `{"data":[{"id":4,"url":"https://example.com","check_status":"ok"}],"next_cursor":4}`)
 		case "GET /api/v1/monitors/3":
 			fmt.Fprint(w, `{"data":{"id":3,"url":"https://example.com","check_status":"checking"}}`)
 		case "POST /api/v1/monitors/3/check":
@@ -77,16 +77,20 @@ func TestCLI(t *testing.T) {
 	for _, args := range [][]string{
 		{"project", "list"},
 		{"monitor", "add", "--project-id", "1", "https://example.com", "--json"},
-		{"monitor", "list", "--after-id", "3"},
+		{"monitor", "list", "--project-id", "1", "--after-id", "3"},
 		{"monitor", "show", "3"},
 		{"monitor", "check", "3", "--json"},
 	} {
 		out.Reset()
+		errOut.Reset()
 		if err := run(args, strings.NewReader(""), &out, &errOut); err != nil {
 			t.Fatalf("%v: %v", args, err)
 		}
 		if out.Len() == 0 {
 			t.Fatalf("%v: no output", args)
+		}
+		if args[0] == "monitor" && args[1] == "list" && !strings.Contains(errOut.String(), "--project-id 1 --after-id 4") {
+			t.Fatalf("next page lost project filter: %s", errOut.String())
 		}
 	}
 	if !strings.Contains(out.String(), `"check_status": "checking"`) {
