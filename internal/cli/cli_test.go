@@ -51,8 +51,13 @@ func TestCLI(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 			fmt.Fprint(w, `{"data":{"id":3,"url":"https://example.com"}}`)
 		case "GET /api/v1/monitors":
-			if r.URL.Query().Get("after_id") != "3" || r.URL.Query().Get("project_id") != "1" {
-				t.Errorf("missing project filter or cursor: %s", r.URL.RawQuery)
+			if r.URL.Query().Get("after_id") != "3" || r.URL.Query().Has("project_id") {
+				t.Errorf("unexpected global list query: %s", r.URL.RawQuery)
+			}
+			fmt.Fprint(w, `{"data":[{"id":4,"url":"https://example.com","check_status":"ok"}],"next_cursor":null}`)
+		case "GET /api/v1/projects/1/monitors":
+			if r.URL.Query().Get("after_id") != "3" {
+				t.Errorf("missing project cursor: %s", r.URL.RawQuery)
 			}
 			fmt.Fprint(w, `{"data":[{"id":4,"url":"https://example.com","check_status":"ok"}],"next_cursor":4}`)
 		case "GET /api/v1/monitors/3":
@@ -77,7 +82,8 @@ func TestCLI(t *testing.T) {
 	for _, args := range [][]string{
 		{"project", "list"},
 		{"monitor", "add", "--project-id", "1", "https://example.com", "--json"},
-		{"monitor", "list", "--project-id", "1", "--after-id", "3"},
+		{"monitor", "list", "--after-id", "3"},
+		{"project", "monitors", "1", "--after-id", "3"},
 		{"monitor", "show", "3"},
 		{"monitor", "check", "3", "--json"},
 	} {
@@ -89,9 +95,12 @@ func TestCLI(t *testing.T) {
 		if out.Len() == 0 {
 			t.Fatalf("%v: no output", args)
 		}
-		if args[0] == "monitor" && args[1] == "list" && !strings.Contains(errOut.String(), "--project-id 1 --after-id 4") {
-			t.Fatalf("next page lost project filter: %s", errOut.String())
+		if args[0] == "project" && args[1] == "monitors" && !strings.Contains(errOut.String(), "okuptime project monitors 1 --after-id 4") {
+			t.Fatalf("next page lost project path: %s", errOut.String())
 		}
+	}
+	if err := run([]string{"project", "monitors", "0"}, strings.NewReader(""), &out, &errOut); err == nil {
+		t.Fatal("expected invalid project ID to fail")
 	}
 	if !strings.Contains(out.String(), `"check_status": "checking"`) {
 		t.Fatalf("check should report queued status: %s", out.String())

@@ -80,6 +80,21 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 		}
 		return nil
 	}
+	if len(args) >= 2 && args[0] == "project" && args[1] == "monitors" {
+		if len(args) < 3 {
+			return usageError("用法: okuptime project monitors ID [--after-id ID] [--json]")
+		}
+		id, err := strconv.ParseInt(args[2], 10, 64)
+		if err != nil || id <= 0 {
+			return usageError("项目 ID 必须是正整数")
+		}
+		flags := newFlags("project monitors")
+		afterID := flags.Int64("after-id", 0, "上一页的 next_cursor")
+		if err := flags.Parse(args[3:]); err != nil || flags.NArg() != 0 || *afterID < 0 {
+			return usageError("用法: okuptime project monitors ID [--after-id ID] [--json]")
+		}
+		return listMonitors("/projects/"+strconv.FormatInt(id, 10)+"/monitors", *afterID, fmt.Sprintf("okuptime project monitors %d", id), jsonOutput, out, errOut)
+	}
 	if len(args) < 2 || args[0] != "monitor" {
 		return &api.Error{Code: "usage_error", Message: "未知命令。运行 okuptime help 查看用法"}
 	}
@@ -88,42 +103,10 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	case "list":
 		flags := newFlags("monitor list")
 		afterID := flags.Int64("after-id", 0, "上一页的 next_cursor")
-		projectID := flags.Int64("project-id", 0, "只列出该项目的监控")
-		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *afterID < 0 || *projectID < 0 {
-			return usageError("用法: okuptime monitor list [--project-id ID] [--after-id ID] [--json]")
+		if err := flags.Parse(args[2:]); err != nil || flags.NArg() != 0 || *afterID < 0 {
+			return usageError("用法: okuptime monitor list [--after-id ID] [--json]")
 		}
-		query := url.Values{}
-		if *projectID > 0 {
-			query.Set("project_id", strconv.FormatInt(*projectID, 10))
-		}
-		if *afterID > 0 {
-			query.Set("after_id", strconv.FormatInt(*afterID, 10))
-		}
-		body, err := request(http.MethodGet, "/monitors", query, nil)
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			return printJSON(out, body)
-		}
-		var response struct {
-			Data       []monitor `json:"data"`
-			NextCursor *int64    `json:"next_cursor"`
-		}
-		if err := json.Unmarshal(body, &response); err != nil {
-			return err
-		}
-		for _, item := range response.Data {
-			fmt.Fprintf(out, "%d\t%s\t%s\t%s\n", item.ID, item.URL, item.CheckStatus, item.UptimeStatus)
-		}
-		if response.NextCursor != nil {
-			if *projectID > 0 {
-				fmt.Fprintf(errOut, "下一页: okuptime monitor list --project-id %d --after-id %d\n", *projectID, *response.NextCursor)
-			} else {
-				fmt.Fprintf(errOut, "下一页: okuptime monitor list --after-id %d\n", *response.NextCursor)
-			}
-		}
-		return nil
+		return listMonitors("/monitors", *afterID, "okuptime monitor list", jsonOutput, out, errOut)
 	case "add":
 		flags := newFlags("monitor add")
 		projectID := flags.Int64("project-id", 0, "项目 ID；省略时使用最早的项目")
@@ -204,6 +187,34 @@ func run(args []string, in io.Reader, out, errOut io.Writer) error {
 	}
 }
 
+func listMonitors(path string, afterID int64, command string, jsonOutput bool, out, errOut io.Writer) error {
+	query := url.Values{}
+	if afterID > 0 {
+		query.Set("after_id", strconv.FormatInt(afterID, 10))
+	}
+	body, err := request(http.MethodGet, path, query, nil)
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return printJSON(out, body)
+	}
+	var response struct {
+		Data       []monitor `json:"data"`
+		NextCursor *int64    `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(body, &response); err != nil {
+		return err
+	}
+	for _, item := range response.Data {
+		fmt.Fprintf(out, "%d\t%s\t%s\t%s\n", item.ID, item.URL, item.CheckStatus, item.UptimeStatus)
+	}
+	if response.NextCursor != nil {
+		fmt.Fprintf(errOut, "下一页: %s --after-id %d\n", command, *response.NextCursor)
+	}
+	return nil
+}
+
 func request(method, path string, query url.Values, payload any) ([]byte, error) {
 	client, err := api.New()
 	if err != nil {
@@ -269,8 +280,9 @@ const usage = `okuptime - Okuptime 命令行客户端
 用法:
   okuptime config set-token
   okuptime project list [--json]
+  okuptime project monitors ID [--after-id ID] [--json]
   okuptime monitor add [--project-id ID] [--interval 秒] [--description 文本] URL [--json]
-  okuptime monitor list [--project-id ID] [--after-id ID] [--json]
+  okuptime monitor list [--after-id ID] [--json]
   okuptime monitor show ID [--json]
   okuptime monitor check ID [--json]
 
