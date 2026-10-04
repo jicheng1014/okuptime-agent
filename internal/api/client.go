@@ -18,6 +18,7 @@ type Error struct {
 	Code    string          `json:"code"`
 	Message string          `json:"message"`
 	Details json.RawMessage `json:"details,omitempty"`
+	Status  int             `json:"-"`
 }
 
 func (e *Error) Error() string { return e.Message }
@@ -28,7 +29,7 @@ type Client struct {
 	http  *http.Client
 }
 
-func New() (*Client, error) {
+func BaseURL() (*url.URL, error) {
 	base := os.Getenv("OKUPTIME_BASE_URL")
 	if base == "" {
 		base = defaultBaseURL
@@ -37,6 +38,22 @@ func New() (*Client, error) {
 	if err != nil || u.Hostname() == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" || (u.Path != "" && u.Path != "/") || (u.Scheme != "https" && !(u.Scheme == "http" && (u.Hostname() == "localhost" || u.Hostname() == "127.0.0.1" || u.Hostname() == "::1"))) {
 		return nil, &Error{Code: "config_error", Message: "OKUPTIME_BASE_URL 必须是 HTTPS 地址；仅本机开发允许 HTTP"}
 	}
+	return u, nil
+}
+
+func NewPublic(timeout time.Duration) (*Client, error) {
+	base, err := BaseURL()
+	if err != nil {
+		return nil, err
+	}
+	return &Client{base: base, http: &http.Client{Timeout: timeout, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}}, nil
+}
+
+func New() (*Client, error) {
+	client, err := NewPublic(20 * time.Second)
+	if err != nil {
+		return nil, err
+	}
 	token, err := config.Token()
 	if err != nil {
 		return nil, &Error{Code: "config_error", Message: err.Error()}
@@ -44,11 +61,8 @@ func New() (*Client, error) {
 	if !config.ValidToken(token) {
 		return nil, &Error{Code: "config_error", Message: "缺少有效访问令牌；先运行 okuptime config set-token"}
 	}
-	return &Client{
-		base:  u,
-		token: token,
-		http:  &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }},
-	}, nil
+	client.token = token
+	return client, nil
 }
 
 func (c *Client) Do(method, path string, query url.Values, payload any) ([]byte, error) {
@@ -65,7 +79,9 @@ func (c *Client) Do(method, path string, query url.Values, payload any) ([]byte,
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.token)
+	if c.token != "" {
+		req.Header.Set("Authorization", "Bearer "+c.token)
+	}
 	req.Header.Set("Accept", "application/json")
 	if payload != nil {
 		req.Header.Set("Content-Type", "application/json")
@@ -87,9 +103,10 @@ func (c *Client) Do(method, path string, query url.Values, payload any) ([]byte,
 			Error Error `json:"error"`
 		}
 		if json.Unmarshal(data, &response) == nil && response.Error.Code != "" {
+			response.Error.Status = resp.StatusCode
 			return nil, &response.Error
 		}
-		return nil, &Error{Code: "http_error", Message: "服务器返回 " + resp.Status}
+		return nil, &Error{Code: "http_error", Message: "服务器返回 " + resp.Status, Status: resp.StatusCode}
 	}
 	if !json.Valid(data) {
 		return nil, &Error{Code: "response_error", Message: "服务器未返回有效 JSON"}

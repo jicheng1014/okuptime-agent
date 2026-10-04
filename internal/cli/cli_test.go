@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -43,6 +44,13 @@ func TestCLI(t *testing.T) {
 		switch r.Method + " " + r.URL.Path {
 		case "GET /api/v1/projects":
 			fmt.Fprint(w, `{"data":[{"id":1,"name":"Default"}]}`)
+		case "POST /api/v1/projects":
+			var payload map[string]string
+			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["name"] != "Demo" {
+				t.Errorf("wrong project payload: %v, %v", payload, err)
+			}
+			w.WriteHeader(http.StatusCreated)
+			fmt.Fprint(w, `{"data":{"id":2,"name":"Demo"}}`)
 		case "POST /api/v1/monitors":
 			var payload map[string]any
 			if err := json.NewDecoder(r.Body).Decode(&payload); err != nil || payload["url"] != "https://example.com" || payload["project_id"] != float64(1) {
@@ -81,6 +89,7 @@ func TestCLI(t *testing.T) {
 
 	for _, args := range [][]string{
 		{"project", "list"},
+		{"project", "create", "Demo", "--json"},
 		{"monitor", "add", "--project-id", "1", "https://example.com", "--json"},
 		{"monitor", "list", "--after-id", "3"},
 		{"project", "monitors", "1", "--after-id", "3"},
@@ -132,4 +141,69 @@ type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
 	return fn(request)
+}
+
+func TestVersionUpdateAndDailyHint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	t.Setenv("OKUPTIME_TOKEN", "")
+	t.Setenv("OKUPTIME_BASE_URL", "http://localhost")
+	previous := http.DefaultTransport
+	checks := 0
+	failCheck := false
+	http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		w := httptest.NewRecorder()
+		if r.URL.Path == "/api/v1/cli/releases/latest" {
+			checks++
+			if r.Header.Get("Authorization") != "" {
+				t.Fatal("release check must not send token")
+			}
+			if failCheck {
+				w.WriteHeader(503)
+				fmt.Fprint(w, `{}`)
+			} else {
+				fmt.Fprintf(w, `{"data":{"version":"1.1.0","platform":%q,"architecture":%q,"url":"http://localhost/binary","sha256":%q,"size":1}}`, runtime.GOOS, runtime.GOARCH, strings.Repeat("a", 64))
+			}
+		} else {
+			fmt.Fprint(w, `{"data":[]}`)
+		}
+		return w.Result(), nil
+	})
+	t.Cleanup(func() { http.DefaultTransport = previous })
+	var out, errOut bytes.Buffer
+	for _, args := range [][]string{{"version", "--json"}, {"update", "--check", "--json"}} {
+		out.Reset()
+		if status := RunWithBuildInfo(args, strings.NewReader(""), &out, &errOut, "dev", ""); status != 0 || !json.Valid(out.Bytes()) {
+			t.Fatalf("%v: %d %s %s", args, status, out.String(), errOut.String())
+		}
+	}
+	out.Reset()
+	if status := RunWithBuildInfo([]string{"update", "--json"}, strings.NewReader(""), &out, &errOut, "dev", ""); status != 1 || !strings.Contains(out.String(), "签名") {
+		t.Fatalf("unsigned build installed: %d %s", status, out.String())
+	}
+	t.Setenv("OKUPTIME_TOKEN", strings.Repeat("a", 64))
+	checks = 0
+	for i := 0; i < 2; i++ {
+		out.Reset()
+		if status := RunWithBuildInfo([]string{"project", "list", "--json"}, strings.NewReader(""), &out, &errOut, "1.0.0", ""); status != 0 || !json.Valid(out.Bytes()) {
+			t.Fatalf("business failed: %d %s", status, out.String())
+		}
+	}
+	if checks != 1 || !strings.Contains(errOut.String(), "okuptime update") {
+		t.Fatalf("daily check: %d %s", checks, errOut.String())
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("XDG_CACHE_HOME", t.TempDir())
+	checks = 0
+	failCheck = true
+	errOut.Reset()
+	for i := 0; i < 2; i++ {
+		out.Reset()
+		if status := RunWithBuildInfo([]string{"project", "list", "--json"}, strings.NewReader(""), &out, &errOut, "1.0.0", ""); status != 0 || !json.Valid(out.Bytes()) {
+			t.Fatal("update failure broke business")
+		}
+	}
+	if checks != 1 || errOut.Len() != 0 {
+		t.Fatalf("failed daily check: %d %s", checks, errOut.String())
+	}
 }

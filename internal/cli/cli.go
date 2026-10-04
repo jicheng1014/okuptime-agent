@@ -10,9 +10,12 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/jicheng1014/okuptime-agent/internal/api"
 	"github.com/jicheng1014/okuptime-agent/internal/config"
+	"github.com/jicheng1014/okuptime-agent/internal/update"
 )
 
 type monitor struct {
@@ -34,8 +37,12 @@ type project struct {
 }
 
 func Run(args []string, in io.Reader, out, errOut io.Writer) int {
+	return RunWithBuildInfo(args, in, out, errOut, "dev", "")
+}
+
+func RunWithBuildInfo(args []string, in io.Reader, out, errOut io.Writer, version, publicKey string) int {
 	jsonOutput := hasJSONFlag(args)
-	if err := run(args, in, out, errOut); err != nil {
+	if err := runWithBuildInfo(args, in, out, errOut, version, publicKey); err != nil {
 		if jsonOutput {
 			var apiErr *api.Error
 			if !errors.As(err, &apiErr) {
@@ -47,14 +54,79 @@ func Run(args []string, in io.Reader, out, errOut io.Writer) int {
 		}
 		return 1
 	}
+	clean := withoutJSONFlag(args)
+	if len(clean) > 0 && (clean[0] == "project" || clean[0] == "monitor") {
+		update.Notify(version, errOut)
+	}
 	return 0
 }
 
 func run(args []string, in io.Reader, out, errOut io.Writer) error {
+	return runWithBuildInfo(args, in, out, errOut, "dev", "")
+}
+
+func runWithBuildInfo(args []string, in io.Reader, out, errOut io.Writer, version, publicKey string) error {
 	jsonOutput := hasJSONFlag(args)
 	args = withoutJSONFlag(args)
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" {
 		fmt.Fprint(out, usage)
+		return nil
+	}
+
+	if len(args) == 1 && args[0] == "version" {
+		if jsonOutput {
+			return json.NewEncoder(out).Encode(map[string]any{"data": map[string]string{"version": version}})
+		}
+		fmt.Fprintln(out, "okuptime", version)
+		return nil
+	}
+	if args[0] == "update" {
+		if len(args) > 2 || (len(args) == 2 && args[1] != "--check") {
+			return usageError("用法: okuptime update [--check] [--json]")
+		}
+		result, err := update.Check(version, 20*time.Second)
+		if err != nil {
+			return err
+		}
+		if len(args) == 1 && result.Available {
+			if err := update.Apply(version, publicKey, result.Release); err != nil {
+				return err
+			}
+			result.Updated = true
+		}
+		if jsonOutput {
+			return json.NewEncoder(out).Encode(map[string]any{"data": result})
+		}
+		switch {
+		case result.Updated:
+			fmt.Fprintf(out, "已更新到 %s；上个版本保存在 .previous\n", result.Release.Version)
+		case result.Release == nil:
+			fmt.Fprintln(out, "当前平台尚无 CLI 发布版本")
+		case result.Available:
+			fmt.Fprintf(out, "发现新版本 %s（当前 %s）；运行 okuptime update 安装\n", result.Release.Version, version)
+		default:
+			fmt.Fprintf(out, "当前已是最新版本 %s\n", version)
+		}
+		return nil
+	}
+	if len(args) >= 2 && args[0] == "project" && args[1] == "create" {
+		if len(args) != 3 || strings.TrimSpace(args[2]) == "" {
+			return usageError("用法: okuptime project create NAME [--json]")
+		}
+		body, err := request(http.MethodPost, "/projects", nil, map[string]string{"name": args[2]})
+		if err != nil {
+			return err
+		}
+		if jsonOutput {
+			return printJSON(out, body)
+		}
+		var response struct {
+			Data project `json:"data"`
+		}
+		if err := json.Unmarshal(body, &response); err != nil {
+			return err
+		}
+		fmt.Fprintf(out, "已创建项目 #%d %s\n", response.Data.ID, response.Data.Name)
 		return nil
 	}
 
@@ -278,7 +350,10 @@ func printJSON(out io.Writer, body []byte) error {
 const usage = `okuptime - Okuptime 命令行客户端
 
 用法:
+  okuptime version [--json]
+  okuptime update [--check] [--json]
   okuptime config set-token
+  okuptime project create NAME [--json]
   okuptime project list [--json]
   okuptime project monitors ID [--after-id ID] [--json]
   okuptime monitor add [--project-id ID] [--interval 秒] [--description 文本] URL [--json]
