@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -112,6 +113,9 @@ func TestApplyAndFailures(t *testing.T) {
 			case "symlink":
 				path = filepath.Join(dir, "link")
 				if err := os.Symlink(executable, path); err != nil {
+					if runtime.GOOS == "windows" {
+						t.Skip("Windows symlinks require developer mode or administrator privileges")
+					}
 					t.Fatal(err)
 				}
 			case "bad-signature":
@@ -150,7 +154,7 @@ func TestApplyAndFailures(t *testing.T) {
 				}
 				w.Write(data)
 			})
-			err := applyTo(current, key, m, path)
+			_, err := applyTo(current, key, m, path, false)
 			got, _ := os.ReadFile(executable)
 			if test == "success" || test == "symlink" {
 				if err != nil || string(got) != "new-binary" {
@@ -161,7 +165,7 @@ func TestApplyAndFailures(t *testing.T) {
 					t.Fatalf("backup: %s %v", old, err)
 				}
 				info, _ := os.Stat(executable)
-				if info.Mode().Perm() != 0755 {
+				if runtime.GOOS != "windows" && info.Mode().Perm() != 0755 {
 					t.Fatal("lost executable permissions")
 				}
 				if test == "symlink" {
@@ -194,6 +198,7 @@ func TestPermissionError(t *testing.T) {
 
 func TestNotifyRecoversStaleLock(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("OKUPTIME_BASE_URL", "http://localhost")
 	dir, err := os.UserCacheDir()
@@ -221,5 +226,92 @@ func TestNotifyRecoversStaleLock(t *testing.T) {
 	}
 	if _, err := os.Stat(lock); !os.IsNotExist(err) {
 		t.Fatal("lock not removed")
+	}
+}
+
+func TestWindowsStaging(t *testing.T) {
+	t.Setenv("OKUPTIME_BASE_URL", "http://localhost")
+	data := []byte("verified-binary")
+	m, key, _ := signedRelease(t, data)
+	executable := filepath.Join(t.TempDir(), "okuptime.exe")
+	if err := os.WriteFile(executable, []byte("old-binary"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	mockHTTP(t, func(w http.ResponseWriter, r *http.Request) { w.Write(data) })
+	executable, err := filepath.EvalSymlinks(executable)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staged, err := applyTo("1.0.0", key, m, executable, true)
+	if err != nil || staged != executable+".pending.exe" {
+		t.Fatalf("stage: %s %v", staged, err)
+	}
+	old, _ := os.ReadFile(executable)
+	pending, _ := os.ReadFile(staged)
+	if string(old) != "old-binary" || string(pending) != string(data) {
+		t.Fatalf("stage replaced running binary: %s %s", old, pending)
+	}
+	if _, err := os.Stat(executable + ".previous"); !os.IsNotExist(err) {
+		t.Fatal("staging touched backup")
+	}
+	command := FinalizeCommand(`C:\Users\O'Brien\OK Uptime\okuptime.exe.pending.exe`, m.SHA256)
+	for _, part := range []string{"O''Brien", "Get-FileHash -LiteralPath", m.SHA256, "Copy-Item -LiteralPath", "Move-Item -LiteralPath", "catch", "version --json"} {
+		if !strings.Contains(command, part) {
+			t.Fatalf("missing %s in command: %s", part, command)
+		}
+	}
+}
+
+func TestWindowsFinalizeCommand(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("PowerShell finalization requires native Windows")
+	}
+	dir := filepath.Join(t.TempDir(), "O'Brien")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(dir, "okuptime.exe")
+	staged := target + ".pending.exe"
+	if err := os.WriteFile(target, []byte("old-binary"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	build := exec.Command("go", "build", "-o", staged, "-ldflags", "-X main.version=1.2.0", "../../cmd/okuptime")
+	if output, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("build fixture: %v %s", err, output)
+	}
+	verified, err := os.ReadFile(staged)
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash := sha256.Sum256(verified)
+	finish := func(checksum string) ([]byte, error) {
+		return exec.Command("powershell.exe", "-NoProfile", "-NonInteractive", "-Command", FinalizeCommand(staged, checksum)).CombinedOutput()
+	}
+	output, err := finish(hex.EncodeToString(hash[:]))
+	if err != nil || !strings.Contains(string(output), "1.2.0") {
+		t.Fatalf("finalize: %v %s", err, output)
+	}
+	got, _ := os.ReadFile(target)
+	previous, _ := os.ReadFile(target + ".previous")
+	if string(got) != string(verified) || string(previous) != "old-binary" {
+		t.Fatal("finalize failed to preserve old binary")
+	}
+	if err := os.WriteFile(staged, []byte("corrupt"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := finish(hex.EncodeToString(hash[:])); err == nil {
+		t.Fatalf("bad checksum accepted: %s", output)
+	}
+	got, _ = os.ReadFile(target)
+	if string(got) != string(verified) {
+		t.Fatal("checksum failure changed installed CLI")
+	}
+	corruptHash := sha256.Sum256([]byte("corrupt"))
+	if output, err := finish(hex.EncodeToString(corruptHash[:])); err == nil {
+		t.Fatalf("invalid executable accepted: %s", output)
+	}
+	got, _ = os.ReadFile(target)
+	if string(got) != string(verified) {
+		t.Fatal("failed executable did not roll back")
 	}
 }

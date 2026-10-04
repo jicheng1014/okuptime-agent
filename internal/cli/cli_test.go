@@ -16,6 +16,8 @@ import (
 
 func TestCLI(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("OKUPTIME_TOKEN", "")
 	token := strings.Repeat("a", 64)
 	var out, errOut bytes.Buffer
@@ -30,7 +32,7 @@ func TestCLI(t *testing.T) {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(path)
-	if err != nil || info.Mode().Perm() != 0600 {
+	if err != nil || (runtime.GOOS != "windows" && info.Mode().Perm() != 0600) {
 		t.Fatalf("config permissions: %v, %v", info, err)
 	}
 
@@ -145,6 +147,8 @@ func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error)
 
 func TestVersionUpdateAndDailyHint(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	t.Setenv("OKUPTIME_TOKEN", "")
 	t.Setenv("OKUPTIME_BASE_URL", "http://localhost")
@@ -193,6 +197,8 @@ func TestVersionUpdateAndDailyHint(t *testing.T) {
 		t.Fatalf("daily check: %d %s", checks, errOut.String())
 	}
 	t.Setenv("HOME", t.TempDir())
+	t.Setenv("APPDATA", t.TempDir())
+	t.Setenv("LOCALAPPDATA", t.TempDir())
 	t.Setenv("XDG_CACHE_HOME", t.TempDir())
 	checks = 0
 	failCheck = true

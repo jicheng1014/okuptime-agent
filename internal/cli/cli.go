@@ -89,15 +89,23 @@ func runWithBuildInfo(args []string, in io.Reader, out, errOut io.Writer, versio
 			return err
 		}
 		if len(args) == 1 && result.Available {
-			if err := update.Apply(version, publicKey, result.Release); err != nil {
+			stagedPath, err := update.Apply(version, publicKey, result.Release)
+			if err != nil {
 				return err
 			}
-			result.Updated = true
+			result.Staged = stagedPath != ""
+			result.Updated = !result.Staged
+			result.StagedPath = stagedPath
+			if result.Staged {
+				result.FinalizeCommand = update.FinalizeCommand(stagedPath, result.Release.SHA256)
+			}
 		}
 		if jsonOutput {
 			return json.NewEncoder(out).Encode(map[string]any{"data": result})
 		}
 		switch {
+		case result.Staged:
+			fmt.Fprintf(out, "已下载并验证 %s，尚未替换当前 Windows CLI；本命令退出后在 PowerShell 执行：\n%s\n", result.Release.Version, result.FinalizeCommand)
 		case result.Updated:
 			fmt.Fprintf(out, "已更新到 %s；上个版本保存在 .previous\n", result.Release.Version)
 		case result.Release == nil:

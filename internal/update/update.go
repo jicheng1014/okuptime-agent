@@ -35,10 +35,13 @@ type Metadata struct {
 }
 
 type Result struct {
-	CurrentVersion string    `json:"current_version"`
-	Available      bool      `json:"available"`
-	Updated        bool      `json:"updated"`
-	Release        *Metadata `json:"release"`
+	CurrentVersion  string    `json:"current_version"`
+	Available       bool      `json:"available"`
+	Updated         bool      `json:"updated"`
+	Staged          bool      `json:"staged"`
+	StagedPath      string    `json:"staged_path,omitempty"`
+	FinalizeCommand string    `json:"finalize_command,omitempty"`
+	Release         *Metadata `json:"release"`
 }
 
 func Check(current string, timeout time.Duration) (*Result, error) {
@@ -147,59 +150,56 @@ func (m *Metadata) signedPayload() []byte {
 	return []byte(strings.Join([]string{m.Version, m.Platform, m.Architecture, m.URL, m.SHA256, strconv.FormatInt(m.Size, 10), ""}, "\n"))
 }
 
-func Apply(current, publicKey string, release *Metadata) error {
-	if runtime.GOOS == "windows" {
-		return fmt.Errorf("Windows 暂不支持原位更新，请手动安装")
-	}
+func Apply(current, publicKey string, release *Metadata) (string, error) {
 	if publicKey == "" || current == "dev" {
-		return fmt.Errorf("开发构建未配置正式更新签名，允许检查版本但拒绝安装；请安装官方签名构建")
+		return "", fmt.Errorf("开发构建未配置正式更新签名，允许检查版本但拒绝安装；请安装官方签名构建")
 	}
 	executable, err := os.Executable()
 	if err != nil {
-		return err
+		return "", err
 	}
-	return applyTo(current, publicKey, release, executable)
+	return applyTo(current, publicKey, release, executable, runtime.GOOS == "windows")
 }
 
-func applyTo(current, encodedKey string, release *Metadata, executable string) error {
+func applyTo(current, encodedKey string, release *Metadata, executable string, stage bool) (string, error) {
 	if release == nil {
-		return fmt.Errorf("缺少更新发布信息")
+		return "", fmt.Errorf("缺少更新发布信息")
 	}
 	checksum, err := release.validate()
 	if err != nil {
-		return err
+		return "", err
 	}
 	isNewer, err := newer(current, release.Version)
 	if err != nil || !isNewer {
-		return fmt.Errorf("更新版本必须高于当前版本")
+		return "", fmt.Errorf("更新版本必须高于当前版本")
 	}
 	der, err := base64.StdEncoding.DecodeString(encodedKey)
 	if err != nil {
-		return fmt.Errorf("无效更新公钥")
+		return "", fmt.Errorf("无效更新公钥")
 	}
 	parsedKey, err := x509.ParsePKIXPublicKey(der)
 	key, ok := parsedKey.(ed25519.PublicKey)
 	if err != nil || !ok {
-		return fmt.Errorf("无效更新公钥")
+		return "", fmt.Errorf("无效更新公钥")
 	}
 	signature, err := base64.StdEncoding.DecodeString(release.Signature)
 	if err != nil || !ed25519.Verify(key, release.signedPayload(), signature) {
-		return fmt.Errorf("更新签名校验失败")
+		return "", fmt.Errorf("更新签名校验失败")
 	}
 	executable, err = filepath.EvalSymlinks(executable)
 	if err != nil {
-		return err
+		return "", err
 	}
 	info, err := os.Lstat(executable)
 	if err != nil {
-		return err
+		return "", err
 	}
 	if !info.Mode().IsRegular() {
-		return fmt.Errorf("CLI 可执行文件必须是普通文件")
+		return "", fmt.Errorf("CLI 可执行文件必须是普通文件")
 	}
 	tmp, err := os.CreateTemp(filepath.Dir(executable), ".okuptime-update-*")
 	if err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
 	}
 	defer os.Remove(tmp.Name())
 	defer tmp.Close()
@@ -211,40 +211,47 @@ func applyTo(current, encodedKey string, release *Metadata, executable string) e
 	}}
 	resp, err := client.Get(release.URL)
 	if err != nil {
-		return fmt.Errorf("更新下载失败: %w", err)
+		return "", fmt.Errorf("更新下载失败: %w", err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("更新下载 HTTP %d", resp.StatusCode)
+		return "", fmt.Errorf("更新下载 HTTP %d", resp.StatusCode)
 	}
 	hash := sha256.New()
 	n, err := io.Copy(io.MultiWriter(tmp, hash), io.LimitReader(resp.Body, release.Size+1))
 	if err != nil {
-		return fmt.Errorf("更新下载失败: %w", err)
+		return "", fmt.Errorf("更新下载失败: %w", err)
 	}
 	if n != release.Size {
-		return fmt.Errorf("更新包大小校验失败")
+		return "", fmt.Errorf("更新包大小校验失败")
 	}
 	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), hex.EncodeToString(checksum)) {
-		return fmt.Errorf("更新包 SHA256 校验失败")
+		return "", fmt.Errorf("更新包 SHA256 校验失败")
 	}
 	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
 	}
 	if err := tmp.Close(); err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
+	}
+	if stage {
+		path := executable + ".pending.exe"
+		if err := os.Rename(tmp.Name(), path); err != nil {
+			return "", replacementError(err)
+		}
+		return path, nil
 	}
 	// Preserve the running binary before an atomic rename over its original path.
 	if err := backup(executable, info.Mode().Perm()); err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
 	}
 	if err := os.Rename(tmp.Name(), executable); err != nil {
-		return replacementError(err)
+		return "", replacementError(err)
 	}
-	return nil
+	return "", nil
 }
 
 func backup(executable string, mode os.FileMode) error {
@@ -312,4 +319,16 @@ func Notify(current string, out io.Writer) {
 	if err == nil && result.Available {
 		fmt.Fprintf(out, "Okuptime 新版本 %s 可用；运行 okuptime update 安装（当前 %s）\n", result.Release.Version, current)
 	}
+}
+
+// FinalizeCommand runs after the Windows CLI process exits. Recheck the staged
+// bytes before replacement; restore the saved executable if installation fails.
+func FinalizeCommand(stagedPath, checksum string) string {
+	quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+	target := strings.TrimSuffix(stagedPath, ".pending.exe")
+	return "& { $ErrorActionPreference = 'Stop'; $target = " + quote(target) + "; $staged = " + quote(stagedPath) + "; $backup = $target + '.previous'; " +
+		"if ((Get-FileHash -LiteralPath $staged -Algorithm SHA256).Hash -ne " + quote(checksum) + ") { throw 'Staged CLI checksum mismatch' }; " +
+		"Copy-Item -LiteralPath $target -Destination $backup -Force; " +
+		"try { Move-Item -LiteralPath $staged -Destination $target -Force; & $target version --json; if ($LASTEXITCODE -ne 0) { throw 'Updated CLI version check failed' } } " +
+		"catch { Copy-Item -LiteralPath $backup -Destination $target -Force; throw } }"
 }
