@@ -184,6 +184,6 @@ python3 tests/skill_install_test.py
 
 ## Release automation
 
-Push a `vX.Y.Z` tag on a commit already included in `main` to publish a signed six-platform release to OK Uptime. Main pushes and pull requests run tests, vet and a build without publishing. `.github/workflows/cli.yml` requires repository Secrets `CLI_UPDATE_PRIVATE_KEY` (the existing Ed25519 PEM) and `CLI_RELEASE_UPLOAD_TOKEN` (the dedicated server upload token). Keep the existing signing key so installed clients trust later versions. The workflow verifies live metadata and every downloaded binary after uploading.
+Push a `vX.Y.Z` tag on a commit already included in `main` to publish a signed six-platform release to OK Uptime. Main pushes and pull requests run tests, vet and a build without publishing. `.github/workflows/cli.yml` requires repository Secrets `CLI_UPDATE_PRIVATE_KEY` (the existing Ed25519 PEM) and `CLI_RELEASE_UPLOAD_TOKEN` (the dedicated server upload token). Keep the existing signing key so installed clients trust later versions. The workflow verifies live metadata and every downloaded binary after uploading, then keeps the same six binaries and signed manifest in GitHub Release. macOS (Intel/Apple Silicon), Linux and Windows each have amd64 and arm64 builds.
 
 For a local release: `ruby script/release.rb release X.Y.Z /outside/repository/cli-update.pem`. Output defaults to `dist/releases`; the signing key must be outside the repository with permissions `0600`.

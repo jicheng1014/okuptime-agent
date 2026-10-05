@@ -25,6 +25,8 @@ jobs:
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: check
+    permissions:
+      contents: write
     runs-on: ubuntu-latest
     concurrency:
       group: cli-release
@@ -76,3 +78,9 @@ jobs:
                 abort "Download checksum mismatch" unless File.size(file.path) == artifact.fetch("size") && Digest::SHA256.file(file.path).hexdigest == artifact.fetch("sha256")
               end
             end' "dist/releases/v$version/manifest.json"
+      - name: Keep the same artifacts in GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/releases/v"${GITHUB_REF_NAME#v}"/* \
+            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
