@@ -181,3 +181,9 @@ python3 tests/skill_install_test.py
 ```
 
 构建产物位于 `dist/`。`make build-linux` / `make build-windows` 默认 amd64，可用 `GOARCH=arm64` 覆盖。官方构建通过 `main.version`、`main.updatePublicKey` 注入版本和 Base64 Ed25519 PKIX DER 公钥，例如 `make build VERSION=1.0.0 UPDATE_PUBLIC_KEY=...`。签名 payload 为 `version\nplatform\narchitecture\nurl\nsha256\nsize\n`。开发构建默认 `dev`，未配置发布公钥或使用 `dev` 时拒绝安装更新。
+
+## Release automation
+
+Push a `vX.Y.Z` tag on a commit already included in `main` to publish a signed six-platform release to OK Uptime. Main pushes and pull requests run tests, vet and a build without publishing. `.github/workflows/cli.yml` requires repository Secrets `CLI_UPDATE_PRIVATE_KEY` (the existing Ed25519 PEM) and `CLI_RELEASE_UPLOAD_TOKEN` (the dedicated server upload token). Keep the existing signing key so installed clients trust later versions. The workflow verifies live metadata and every downloaded binary after uploading.
+
+For a local release: `ruby script/release.rb release X.Y.Z /outside/repository/cli-update.pem`. Output defaults to `dist/releases`; the signing key must be outside the repository with permissions `0600`.

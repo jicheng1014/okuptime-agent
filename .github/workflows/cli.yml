@@ -1,0 +1,78 @@
+name: CLI
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - run: go test -race ./...
+      - run: go vet ./...
+      - run: go build ./cmd/okuptime
+      - run: ruby tests/release_script_test.rb
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: check
+    runs-on: ubuntu-latest
+    concurrency:
+      group: cli-release
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+      - name: Require a release from main
+        run: git merge-base --is-ancestor HEAD origin/main
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version-file: go.mod
+      - name: Build and sign six platforms
+        env:
+          CLI_UPDATE_PRIVATE_KEY: ${{ secrets.CLI_UPDATE_PRIVATE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$CLI_UPDATE_PRIVATE_KEY"
+          umask 077
+          printf '%s\n' "$CLI_UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/cli-update.pem"
+          trap 'rm -f "$RUNNER_TEMP/cli-update.pem"' EXIT
+          ruby script/release.rb release "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/cli-update.pem"
+      - name: Upload complete release to OK Uptime
+        env:
+          CLI_RELEASE_UPLOAD_TOKEN: ${{ secrets.CLI_RELEASE_UPLOAD_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$CLI_RELEASE_UPLOAD_TOKEN"
+          version="${GITHUB_REF_NAME#v}"
+          args=(--form "manifest=@dist/releases/v$version/manifest.json")
+          for file in dist/releases/v"$version"/okuptime-*; do
+            args+=(--form "files[]=@$file")
+          done
+          curl --fail-with-body --silent --show-error --retry 2 --max-time 600 \
+            --header "Authorization: Bearer $CLI_RELEASE_UPLOAD_TOKEN" \
+            "${args[@]}" https://www.okuptime.com/admin/cli_releases/upload
+      - name: Verify live metadata and all downloads
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          curl --fail --silent --show-error \
+            'https://www.okuptime.com/api/v1/cli/releases/latest?platform=linux&architecture=amd64' \
+            | ruby -rjson -e 'abort "Published version mismatch" unless JSON.parse(STDIN.read).dig("data", "version") == ARGV[0]' "$version"
+          ruby -rjson -rdigest -rtempfile -e '
+            JSON.parse(File.read(ARGV[0])).fetch("artifacts").each do |artifact|
+              Tempfile.create("cli-download") do |file|
+                abort "Download failed" unless system("curl", "--fail", "--silent", "--show-error", "--output", file.path, artifact.fetch("url"))
+                abort "Download checksum mismatch" unless File.size(file.path) == artifact.fetch("size") && Digest::SHA256.file(file.path).hexdigest == artifact.fetch("sha256")
+              end
+            end' "dist/releases/v$version/manifest.json"
