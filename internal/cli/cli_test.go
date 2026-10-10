@@ -155,6 +155,7 @@ func TestTokenAuthorizationGuidance(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("HOME", t.TempDir())
+			t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 			t.Setenv("APPDATA", t.TempDir())
 			t.Setenv("OKUPTIME_BASE_URL", tc.base)
 			t.Setenv("OKUPTIME_TOKEN", tc.token)
