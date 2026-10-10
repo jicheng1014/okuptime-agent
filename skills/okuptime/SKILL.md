@@ -25,11 +25,11 @@ description: 通过 OK Uptime CLI 将网站加入账号的监控项目，查询�
 
 安装器从官网 HTTPS 元数据接口读取最新版本，拒绝重定向与非官方地址，限制下载大小并校验平台、大小和 SHA256；检查下载的二进制能运行后才安装。首次安装通过官网 HTTPS 和发布校验值建立信任；后续 CLI 更新还会验证内置公钥的发布签名。安装失败报告真实原因，不自动使用 sudo、管理员权限或绕过校验。
 
-不要读取或输出已保存的 Token。
+先运行 `okuptime project list --json` 检查授权。缺少或失效的 Token 会在 `error.details.token_url` 返回创建令牌的页面地址；向用户展示可点击链接，引导登录并创建 Token。旧版 CLI 未返回 URL 时使用 [API 访问令牌](https://www.okuptime.com/api_tokens)；用户明确指定其他环境时使用该环境的 `/api_tokens` 页面。
 
-首次授权需用户在 [OK Uptime](https://www.okuptime.com) 的“个人资料 → API 访问令牌”创建 Token，并在本机执行 `okuptime config set-token`。该命令隐藏读取并保存凭证。不要要求用户把 Token 发到聊天中，不放进命令参数、日志、Skill 或仓库。自动化环境已有 `OKUPTIME_TOKEN` 时直接复用。
+用户可以在对话中提供 Token，由助手通过标准输入交给 `okuptime config set-token --json` 保存；先简短说明 Token 会保留在聊天记录中。也可由用户在本机终端执行 `okuptime config set-token`，交互输入不会回显。不要将 Token 放进命令参数、回显、日志、Skill 或仓库；使用不会回显输入的执行方式，工具无法做到时改用本机终端录入。不要读取或输出已保存的 Token。自动化环境已有 `OKUPTIME_TOKEN` 时直接复用，它优先于本地配置。
 
-鉴权失败时提示配置或更新凭证；不要反复重试无效 Token。默认连接官网；仅在用户明确指定环境时使用 `OKUPTIME_BASE_URL`。
+保存成功后再次运行 `okuptime project list --json`，授权有效才继续原任务；保存成功不代表授权通过。鉴权失败时引导更新凭证，不反复重试无效 Token；若环境变量提供了失效 Token，提示更新该变量。默认连接官网；仅在用户明确指定环境时使用 `OKUPTIME_BASE_URL`。
 
 ## 添加网站
 

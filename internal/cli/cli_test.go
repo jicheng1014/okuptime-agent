@@ -139,6 +139,79 @@ func TestRejectInsecureRemoteBaseURL(t *testing.T) {
 	}
 }
 
+func TestTokenAuthorizationGuidance(t *testing.T) {
+	for _, tc := range []struct {
+		name, base, token, body, code string
+		status                        int
+		jsonOutput, hint              bool
+	}{
+		{"missing official", "https://www.okuptime.com", "", "", "config_error", 0, true, true},
+		{"invalid local", "http://localhost:3000", "invalid", "", "config_error", 0, true, true},
+		{"expired custom", "https://staging.example.com", strings.Repeat("a", 64), `{"error":{"code":"unauthorized","message":"expired","details":{"reason":"revoked"}}}`, "unauthorized", 401, true, true},
+		{"plain missing", "https://www.okuptime.com", "", "", "config_error", 0, false, true},
+		{"json expired without API envelope", "http://localhost:3000", strings.Repeat("a", 64), "Unauthorized", "http_error", 401, true, true},
+		{"plain expired", "http://localhost:3000", strings.Repeat("a", 64), "Unauthorized", "http_error", 401, false, true},
+		{"other error", "https://www.okuptime.com", strings.Repeat("a", 64), `{"error":{"code":"rate_limited","message":"wait"}}`, "rate_limited", 429, true, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("HOME", t.TempDir())
+			t.Setenv("APPDATA", t.TempDir())
+			t.Setenv("OKUPTIME_BASE_URL", tc.base)
+			t.Setenv("OKUPTIME_TOKEN", tc.token)
+			previous := http.DefaultTransport
+			calls := 0
+			http.DefaultTransport = roundTripFunc(func(r *http.Request) (*http.Response, error) {
+				calls++
+				w := httptest.NewRecorder()
+				w.WriteHeader(tc.status)
+				fmt.Fprint(w, tc.body)
+				return w.Result(), nil
+			})
+			t.Cleanup(func() { http.DefaultTransport = previous })
+			args := []string{"project", "list"}
+			if tc.jsonOutput {
+				args = append(args, "--json")
+			}
+			var out, errOut bytes.Buffer
+			if status := Run(args, strings.NewReader(""), &out, &errOut); status != 1 {
+				t.Fatalf("expected failure, got %d", status)
+			}
+			tokenURL := tc.base + "/api_tokens"
+			if tc.jsonOutput {
+				var response struct {
+					Error struct {
+						Code, Message string
+						Details       map[string]string
+					}
+				}
+				if err := json.Unmarshal(out.Bytes(), &response); err != nil {
+					t.Fatal(err)
+				}
+				if response.Error.Code != tc.code || errOut.Len() != 0 {
+					t.Fatalf("unexpected error: %s %s", &out, &errOut)
+				}
+				if tc.hint && response.Error.Details["token_url"] != tokenURL {
+					t.Fatalf("missing token URL: %s", &out)
+				}
+				if !tc.hint && response.Error.Details["token_url"] != "" {
+					t.Fatalf("unrelated error has token hint: %s", &out)
+				}
+				if tc.name == "expired custom" && response.Error.Details["reason"] != "revoked" {
+					t.Fatalf("lost server details: %s", &out)
+				}
+			} else if out.Len() != 0 || !strings.Contains(errOut.String(), tokenURL) || !strings.Contains(errOut.String(), "okuptime config set-token") {
+				t.Fatalf("missing terminal guidance: %s %s", &out, &errOut)
+			}
+			if tc.status == 0 && calls != 0 {
+				t.Fatal("missing token made a network request")
+			}
+			if len(tc.token) == 64 && strings.Contains(out.String()+errOut.String(), tc.token) {
+				t.Fatal("token leaked")
+			}
+		})
+	}
+}
+
 type roundTripFunc func(*http.Request) (*http.Response, error)
 
 func (fn roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {

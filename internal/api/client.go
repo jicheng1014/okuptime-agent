@@ -59,10 +59,22 @@ func New() (*Client, error) {
 		return nil, &Error{Code: "config_error", Message: err.Error()}
 	}
 	if !config.ValidToken(token) {
-		return nil, &Error{Code: "config_error", Message: "缺少有效访问令牌；先运行 okuptime config set-token"}
+		return nil, client.tokenError(&Error{Code: "config_error", Message: "缺少有效访问令牌"})
 	}
 	client.token = token
 	return client, nil
+}
+
+func (c *Client) tokenError(err *Error) *Error {
+	tokenURL := c.base.ResolveReference(&url.URL{Path: "/api_tokens"}).String()
+	err.Message += "；请打开 " + tokenURL + " 登录并创建访问令牌，再运行 okuptime config set-token"
+	details := map[string]json.RawMessage{}
+	if json.Unmarshal(err.Details, &details) != nil || details == nil {
+		details = map[string]json.RawMessage{}
+	}
+	details["token_url"], _ = json.Marshal(tokenURL)
+	err.Details, _ = json.Marshal(details)
+	return err
 }
 
 func (c *Client) Do(method, path string, query url.Values, payload any) ([]byte, error) {
@@ -102,11 +114,14 @@ func (c *Client) Do(method, path string, query url.Values, payload any) ([]byte,
 		var response struct {
 			Error Error `json:"error"`
 		}
-		if json.Unmarshal(data, &response) == nil && response.Error.Code != "" {
-			response.Error.Status = resp.StatusCode
-			return nil, &response.Error
+		if json.Unmarshal(data, &response) != nil || response.Error.Code == "" {
+			response.Error = Error{Code: "http_error", Message: "服务器返回 " + resp.Status}
 		}
-		return nil, &Error{Code: "http_error", Message: "服务器返回 " + resp.Status, Status: resp.StatusCode}
+		response.Error.Status = resp.StatusCode
+		if resp.StatusCode == http.StatusUnauthorized && c.token != "" {
+			return nil, c.tokenError(&response.Error)
+		}
+		return nil, &response.Error
 	}
 	if !json.Valid(data) {
 		return nil, &Error{Code: "response_error", Message: "服务器未返回有效 JSON"}

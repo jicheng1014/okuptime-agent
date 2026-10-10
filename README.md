@@ -17,7 +17,7 @@
 
 可以向助手发送：
 
-> 请从 https://github.com/jicheng1014/okuptime-agent.git 临时克隆，仅将 skills/okuptime 完整复制到当前助手的 Skill 目录。目标已存在时先检查并停止自动覆盖。阅读安装后的 SKILL.md，按当前系统安装或验证 CLI，校验平台、架构、大小和 SHA256，失败即停止。授权时提醒在本机终端执行 okuptime config set-token，不索取、读取或输出 Token。
+> 请从 https://github.com/jicheng1014/okuptime-agent.git 临时克隆，仅将 skills/okuptime 完整复制到当前助手的 Skill 目录。已有安装先检查并保留其他文件。阅读 SKILL.md，使用附带安装器安装或验证 CLI，保留下载校验。检查授权；缺少或失效时提供 CLI 返回的令牌页面链接，引导登录并创建 Token。可在对话中提供 Token 由助手通过标准输入配置，也可在本机终端执行 okuptime config set-token。对话录入会保留在聊天记录中，不回显或读取已保存的 Token。
 
 手动安装需要 Git。macOS / Linux（Claude Code 将 `skill_root` 改成 `$HOME/.claude/skills`）：
 
@@ -121,9 +121,9 @@ WSL 使用 Linux 安装器。macOS / Linux 需要 curl 和 SHA256 工具；Windo
 okuptime config set-token
 ```
 
-命令隐藏读取凭证。**不要将 Token 发到 AI 聊天、放入命令参数、日志、Skill 或仓库。**自动化环境可通过受保护的环境变量 `OKUPTIME_TOKEN` 提供凭证，它优先于本地配置。不要读取或输出已经保存的 Token。
+命令在交互终端中隐藏读取凭证，也支持标准输入。使用 AI 助手时，可在对话中提供 Token，由助手通过标准输入配置；Token 会保留在聊天记录中，也可选择本机终端录入。**不要将 Token 放入命令参数、回显、日志、Skill 或仓库。**自动化环境可通过受保护的环境变量 `OKUPTIME_TOKEN` 提供凭证，它优先于本地配置。不要读取或输出已经保存的 Token。
 
-凭证保存于系统用户配置目录的 `okuptime/config.json`；Unix 文件权限为 `0600`，Windows 使用 `%APPDATA%\okuptime\config.json` 并继承用户目录权限。重新运行 `config set-token` 可更换凭证；鉴权失败时配置或更换 Token，不反复重试无效凭证。
+凭证保存于系统用户配置目录的 `okuptime/config.json`；Unix 文件权限为 `0600`，Windows 使用 `%APPDATA%\okuptime\config.json` 并继承用户目录权限。重新运行 `config set-token` 可更换凭证；缺少或失效的 Token 会在普通错误提示和 JSON 的 `error.details.token_url` 中提供创建令牌的页面链接，使用当前连接环境的域名。配置后运行 `okuptime project list --json` 验证授权，不反复重试无效凭证。
 
 ### 使用
 
@@ -161,7 +161,7 @@ Windows 返回 `data.staged=true`、`data.updated=false`、`staged_path` 和 `fi
 - **找不到 `okuptime`：**使用上表的绝对路径；PowerShell 使用 `&`，不要为了 PATH 重新安装。
 - **不支持平台 / 元数据 404：**核对系统、架构和官网发布状态，停止安装并报告，不擅自改为源码编译。
 - **下载失败 / 大小或摘要不符：**检查官网和网络；不要跳过 HTTPS、SHA256 或签名检查，也不要执行未校验的文件。
-- **401 / unauthorized：**在本机重新运行 `config set-token`，核对账号和 Token 状态；不要将 Token 交给助手排查。
+- **401 / unauthorized：**打开错误中的令牌页面链接，登录并创建有效 Token，通过对话或本机终端重新配置，再查询项目验证授权。
 - **配额、重复或限流：**根据 JSON 的 `error.code` 处理；重复监控不删除重建，网络超时先查询项目再重试，避免重复创建。
 - **Windows 更新停在 staged：**完成 CLI 给出的 PowerShell 替换步骤并核对版本，下载完成不等于更新完成。
 - **开发构建无法原位更新：**`dev` 或缺少发布公钥的构建只能检查版本，安装官网签名构建后再使用自更新。
