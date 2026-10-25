@@ -7,28 +7,41 @@ if ($existing) { & $existing.Source version --json; if ($LASTEXITCODE -ne 0) { t
 if (Test-Path -LiteralPath $target) { & $target version --json; if ($LASTEXITCODE -ne 0) { throw 'Existing CLI failed' }; return }
 $arch = (Get-CimInstance -ClassName Win32_Processor | Select-Object -First 1).Architecture
 $architecture = switch ($arch) { 9 { 'amd64' }; 12 { 'arm64' }; default { throw "Unsupported architecture: $arch" } }
-# No redirects: metadata and downloads must originate at the official host.
-function Download([string]$url, [string]$path, [long]$limit) {
-    $request = [Net.HttpWebRequest]::Create($url)
-    $request.AllowAutoRedirect = $false
-    $request.Timeout = 30000
-    $request.ReadWriteTimeout = 30000
-    $response = $request.GetResponse()
-    try {
-        if ([int]$response.StatusCode -ne 200) { throw 'Expected HTTP 200 without redirects' }
-        if ($response.ContentLength -gt $limit) { throw 'Download exceeds size limit' }
-        $inputStream = $response.GetResponseStream()
-        $outputStream = [IO.File]::Open($path, [IO.FileMode]::CreateNew)
+# Metadata refuses redirects; binary redirects are limited to GitHub HTTPS hosts.
+function Download([string]$url, [string]$path, [long]$limit, [bool]$github = $false) {
+    for ($redirects = 0; $redirects -le 5; $redirects++) {
+        if ($github) {
+            $uri = [Uri]$url
+            if ($uri.Scheme -ne 'https' -or $uri.Host -notin @('github.com', 'release-assets.githubusercontent.com', 'objects.githubusercontent.com') -or -not $uri.IsDefaultPort -or $uri.UserInfo) { throw 'Invalid GitHub download URL' }
+            if ($uri.Host -eq 'github.com' -and -not $uri.AbsolutePath.StartsWith('/jicheng1014/okuptime-agent/releases/download/')) { throw 'Invalid GitHub release path' }
+        }
+        $request = [Net.HttpWebRequest]::Create($url)
+        $request.AllowAutoRedirect = $false
+        $request.Timeout = 30000
+        $request.ReadWriteTimeout = 30000
+        $response = $request.GetResponse()
         try {
-            $buffer = New-Object byte[] 65536
-            [long]$total = 0
-            while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
-                $total += $count
-                if ($total -gt $limit) { throw 'Download exceeds size limit' }
-                $outputStream.Write($buffer, 0, $count)
+            if ($github -and [int]$response.StatusCode -in @(301, 302, 303, 307, 308)) {
+                if ($redirects -eq 5 -or -not $response.Headers['Location']) { throw 'Invalid or excessive GitHub redirects' }
+                $url = ([Uri]::new([Uri]$url, $response.Headers['Location'])).AbsoluteUri
+                continue
             }
-        } finally { $outputStream.Dispose(); $inputStream.Dispose() }
-    } finally { $response.Dispose() }
+            if ([int]$response.StatusCode -ne 200) { throw 'Expected HTTP 200' }
+            if ($response.ContentLength -gt $limit) { throw 'Download exceeds size limit' }
+            $inputStream = $response.GetResponseStream()
+            $outputStream = [IO.File]::Open($path, [IO.FileMode]::CreateNew)
+            try {
+                $buffer = New-Object byte[] 65536
+                [long]$total = 0
+                while (($count = $inputStream.Read($buffer, 0, $buffer.Length)) -gt 0) {
+                    $total += $count
+                    if ($total -gt $limit) { throw 'Download exceeds size limit' }
+                    $outputStream.Write($buffer, 0, $count)
+                }
+            } finally { $outputStream.Dispose(); $inputStream.Dispose() }
+        } finally { $response.Dispose() }
+        return
+    }
 }
 $work = Join-Path ([IO.Path]::GetTempPath()) ([Guid]::NewGuid().ToString())
 [IO.Directory]::CreateDirectory($work) | Out-Null
@@ -43,7 +56,8 @@ try {
     if ($release.url.Contains('/../') -or $release.url.Contains('/./')) { throw 'Invalid download path' }
     if ($release.url -cnotmatch '^https://www\.okuptime\.com/cli/releases/[A-Za-z0-9._/-]+\.exe$') { throw 'Invalid official download URL' }
     $binary = Join-Path $work 'okuptime.exe'
-    Download $release.url $binary $size
+    $url = $release.url.Replace('https://www.okuptime.com/cli/releases/', 'https://github.com/jicheng1014/okuptime-agent/releases/download/')
+    Download $url $binary $size $true
     if ((Get-Item -LiteralPath $binary).Length -ne $size) { throw 'Size mismatch' }
     if ((Get-FileHash -LiteralPath $binary -Algorithm SHA256).Hash.ToLowerInvariant() -ne $release.sha256) { throw 'Checksum mismatch' }
     $versionOutput = & $binary version --json

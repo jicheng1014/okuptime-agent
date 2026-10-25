@@ -21,10 +21,24 @@ jobs:
       - run: go vet ./...
       - run: go build ./cmd/okuptime
       - run: ruby tests/release_script_test.rb
+      - run: python3 tests/skill_install_test.py
+
+  install-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install the public GitHub release in a temporary user directory
+        shell: powershell
+        run: |
+          $env:LOCALAPPDATA = Join-Path $env:RUNNER_TEMP 'okuptime-install-test'
+          & ./skills/okuptime/scripts/install.ps1
+          if (-not (Test-Path "$env:LOCALAPPDATA/OKUptime/bin/okuptime.exe")) { throw 'CLI was not installed' }
+          & "$env:LOCALAPPDATA/OKUptime/bin/okuptime.exe" version --json
+          if ($LASTEXITCODE -ne 0) { throw 'Installed CLI failed' }
 
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: check
+    needs: [check, install-windows]
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -50,6 +64,12 @@ jobs:
           printf '%s\n' "$CLI_UPDATE_PRIVATE_KEY" > "$RUNNER_TEMP/cli-update.pem"
           trap 'rm -f "$RUNNER_TEMP/cli-update.pem"' EXIT
           ruby script/release.rb release "${GITHUB_REF_NAME#v}" "$RUNNER_TEMP/cli-update.pem"
+      - name: Keep the same artifacts in GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/releases/v"${GITHUB_REF_NAME#v}"/* \
+            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes
       - name: Upload complete release to OK Uptime
         env:
           CLI_RELEASE_UPLOAD_TOKEN: ${{ secrets.CLI_RELEASE_UPLOAD_TOKEN }}
@@ -78,9 +98,3 @@ jobs:
                 abort "Download checksum mismatch" unless File.size(file.path) == artifact.fetch("size") && Digest::SHA256.file(file.path).hexdigest == artifact.fetch("sha256")
               end
             end' "dist/releases/v$version/manifest.json"
-      - name: Keep the same artifacts in GitHub Release
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh release create "$GITHUB_REF_NAME" dist/releases/v"${GITHUB_REF_NAME#v}"/* \
-            --verify-tag --title "$GITHUB_REF_NAME" --generate-notes

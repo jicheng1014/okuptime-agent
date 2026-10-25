@@ -23,7 +23,7 @@ description: 通过 OK Uptime CLI 将网站加入账号的监控项目，查询�
 
 先查找 PATH 中的 `okuptime`；再检查表中的用户目录。安装后用可执行文件绝对路径运行所有命令，无需更改 PATH。PowerShell 调用带空格的路径使用 `&`，例如 `& "$env:LOCALAPPDATA\OKUptime\bin\okuptime.exe" version --json`。
 
-安装器从官网 HTTPS 元数据接口读取最新版本，拒绝重定向与非官方地址，限制下载大小并校验平台、大小和 SHA256；检查下载的二进制能运行后才安装。首次安装通过官网 HTTPS 和发布校验值建立信任；后续 CLI 更新还会验证内置公钥的发布签名。安装失败报告真实原因，不自动使用 sudo、管理员权限或绕过校验。
+安装器从官网 HTTPS 元数据接口读取最新版本和校验值，从 [本仓库 GitHub Release](https://github.com/jicheng1014/okuptime-agent/releases) 下载二进制，允许 GitHub 的 HTTPS 文件分发重定向。限制下载大小并校验平台、架构、大小和 SHA256；检查下载的二进制版本且能运行后才安装。首次安装通过官网 HTTPS 和发布校验值建立信任；后续 CLI 更新还会验证内置公钥的发布签名。安装失败报告真实原因，不自动使用 sudo、管理员权限或绕过校验。
 
 先运行 `okuptime project list --json` 检查授权。缺少或失效的 Token 会在 `error.details.token_url` 返回创建令牌的页面地址；向用户展示可点击链接，引导登录并创建 Token。旧版 CLI 未返回 URL 时使用 [API 访问令牌](https://www.okuptime.com/api_tokens)；用户明确指定其他环境时使用该环境的 `/api_tokens` 页面。
 

@@ -52,7 +52,7 @@ try {
 }
 ```
 
-安装后开启新会话，或重新加载 / 重启助手。直接要求“把 https://example.com 加入公司项目”“查看监控 12 的状态”或“重新检测监控 12”。首次使用发现 CLI 未安装时，Skill 会调用附带安装器，使用官网预编译包；无需 Go、管理员权限或修改 PATH。已有 CLI 仅验证，不自动覆盖或升级。账号授权见 [CLI](#cli)。
+安装后开启新会话，或重新加载 / 重启助手。直接要求“把 https://example.com 加入公司项目”“查看监控 12 的状态”或“重新检测监控 12”。首次使用发现 CLI 未安装时，Skill 会调用附带安装器，从 GitHub Release 下载预编译包；无需 Go、管理员权限或修改 PATH。已有 CLI 仅验证，不自动覆盖或升级。账号授权见 [CLI](#cli)。
 
 ### 已有安装迁移与 Skill 更新
 
@@ -77,16 +77,16 @@ Move-Item -LiteralPath (Join-Path $skillHome 'skills\okuptime') -Destination (Jo
 
 ## CLI
 
-从官网 [CLI 下载页](https://www.okuptime.com/cli) 选择操作系统和架构。无需编译；支持以下六个平台。元数据 API 无需 Token，返回当前版本的 `url`、`sha256`、`size` 等校验信息；暂无对应发布时返回 404。
+从 [GitHub Releases](https://github.com/jicheng1014/okuptime-agent/releases/latest) 下载对应系统和架构的安装包，或使用下方安装器自动选择。官网 [CLI 下载页](https://www.okuptime.com/cli) 同样指向 GitHub Release。无需编译；支持以下六个平台，文件名包含对应的 platform / architecture。官网元数据 API 无需 Token，提供版本、SHA256 和大小等校验信息；暂无对应发布时返回 404。
 
-| 系统 / 芯片 | platform / architecture | 最新版本与下载地址 |
+| 系统 / 芯片 | platform / architecture | 最新版本与校验信息 |
 | --- | --- | --- |
-| macOS Intel | darwin / amd64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=darwin&architecture=amd64) |
-| macOS Apple Silicon | darwin / arm64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=darwin&architecture=arm64) |
-| Linux x86_64 | linux / amd64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=linux&architecture=amd64) |
-| Linux ARM64 | linux / arm64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=linux&architecture=arm64) |
-| Windows Intel / AMD | windows / amd64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=windows&architecture=amd64) |
-| Windows ARM64 | windows / arm64 | [发布信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=windows&architecture=arm64) |
+| macOS Intel | darwin / amd64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=darwin&architecture=amd64) |
+| macOS Apple Silicon | darwin / arm64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=darwin&architecture=arm64) |
+| Linux x86_64 | linux / amd64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=linux&architecture=amd64) |
+| Linux ARM64 | linux / arm64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=linux&architecture=arm64) |
+| Windows Intel / AMD | windows / amd64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=windows&architecture=amd64) |
+| Windows ARM64 | windows / arm64 | [校验信息](https://www.okuptime.com/api/v1/cli/releases/latest?platform=windows&architecture=arm64) |
 
 ### 安装与校验
 
@@ -102,7 +102,7 @@ Windows PowerShell：
 powershell.exe -NoProfile -ExecutionPolicy Bypass -File skills/okuptime/scripts/install.ps1
 ```
 
-WSL 使用 Linux 安装器。macOS / Linux 需要 curl 和 SHA256 工具；Windows 使用系统 PowerShell。安装器拒绝重定向和非官网地址，检查平台、架构、大小（最大 64 MiB）、SHA256 和可执行文件版本，全部通过后才安装，不覆盖已有 CLI。首次安装通过官网 HTTPS 和发布校验值建立信任，后续更新还验证内置公钥的发布签名。Windows 的执行策略参数仅影响本次进程。
+WSL 使用 Linux 安装器。macOS / Linux 需要 curl 和 SHA256 工具；Windows 使用系统 PowerShell。安装器从官网 HTTPS 元数据接口读取版本和校验值，从本仓库 GitHub Release 下载二进制，允许 GitHub 的 HTTPS 文件分发重定向。检查平台、架构、大小（最大 64 MiB）、SHA256 和可执行文件版本，全部通过后才安装，不覆盖已有 CLI。首次安装通过官网 HTTPS 和发布校验值建立信任，后续 CLI 自更新仍使用原有官网签名发布链路并验证内置公钥的发布签名。Windows 的执行策略参数仅影响本次进程。
 
 | 系统 | 安装路径 | 验证命令 |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ WSL 使用 Linux 安装器。macOS / Linux 需要 curl 和 SHA256 工具；Windo
 
 未加入 PATH 时，后续命令均使用表中的绝对路径；PowerShell 使用 `&` 调用。也可自行将该用户目录加入 PATH。
 
-手动下载时，先从上表对应的官方元数据中读取 `data.url`、`data.size`、`data.sha256`，下载该 URL 的文件并核对大小和摘要。macOS 使用 `shasum -a 256 ./okuptime`，Linux 使用 `sha256sum ./okuptime`，Windows 使用 `Get-FileHash .\okuptime.exe -Algorithm SHA256`。校验失败停止安装，不跳过校验或申请管理员权限。校验通过后，macOS / Linux 可执行 `chmod +x ./okuptime` 并放入用户目录；Windows 保留 `.exe` 后缀并放入上表目录。目标已存在时优先使用 CLI 更新命令。
+手动下载时，从上表对应的官方元数据中读取 `data.version`、`data.size`、`data.sha256` 和 `data.url` 的文件名，再到 [GitHub Releases](https://github.com/jicheng1014/okuptime-agent/releases) 的同版本（`v<version>`）Assets 中下载同名文件，核对大小和摘要。下载地址为 `https://github.com/jicheng1014/okuptime-agent/releases/download/v<version>/<文件名>`；下载后可重命名为 `okuptime`（Windows 为 `okuptime.exe`）。macOS 使用 `shasum -a 256 ./okuptime`，Linux 使用 `sha256sum ./okuptime`，Windows 使用 `Get-FileHash .\okuptime.exe -Algorithm SHA256`。校验失败停止安装，不跳过校验或申请管理员权限。校验通过后，macOS / Linux 可执行 `chmod +x ./okuptime` 并放入用户目录；Windows 保留 `.exe` 后缀并放入上表目录。目标已存在时优先使用 CLI 更新命令。
 
 ### 本机授权
 
@@ -160,7 +160,7 @@ Windows 返回 `data.staged=true`、`data.updated=false`、`staged_path` 和 `fi
 - **助手未发现 Skill：**检查实际目录下有 `SKILL.md` 和两个安装器，开启新会话或重新加载助手；整个 CLI 仓库不能作为 Skill 安装。
 - **找不到 `okuptime`：**使用上表的绝对路径；PowerShell 使用 `&`，不要为了 PATH 重新安装。
 - **不支持平台 / 元数据 404：**核对系统、架构和官网发布状态，停止安装并报告，不擅自改为源码编译。
-- **下载失败 / 大小或摘要不符：**检查官网和网络；不要跳过 HTTPS、SHA256 或签名检查，也不要执行未校验的文件。
+- **下载失败 / 大小或摘要不符：**检查 GitHub Release、官网元数据和网络；不要跳过 HTTPS、SHA256 或签名检查，也不要执行未校验的文件。
 - **401 / unauthorized：**打开错误中的令牌页面链接，登录并创建有效 Token，通过对话或本机终端重新配置，再查询项目验证授权。
 - **配额、重复或限流：**根据 JSON 的 `error.code` 处理；重复监控不删除重建，网络超时先查询项目再重试，避免重复创建。
 - **Windows 更新停在 staged：**完成 CLI 给出的 PowerShell 替换步骤并核对版本，下载完成不等于更新完成。
@@ -184,6 +184,6 @@ python3 tests/skill_install_test.py
 
 ## Release automation
 
-Push a `vX.Y.Z` tag on a commit already included in `main` to publish a signed six-platform release to OK Uptime. Main pushes and pull requests run tests, vet and a build without publishing. `.github/workflows/cli.yml` requires repository Secrets `CLI_UPDATE_PRIVATE_KEY` (the existing Ed25519 PEM) and `CLI_RELEASE_UPLOAD_TOKEN` (the dedicated server upload token). Keep the existing signing key so installed clients trust later versions. The workflow verifies live metadata and every downloaded binary after uploading, then keeps the same six binaries and signed manifest in GitHub Release. macOS (Intel/Apple Silicon), Linux and Windows each have amd64 and arm64 builds.
+Push a `vX.Y.Z` tag on a commit already included in `main` to publish a signed six-platform release to OK Uptime. Main pushes and pull requests run tests, vet and a build without publishing. `.github/workflows/cli.yml` requires repository Secrets `CLI_UPDATE_PRIVATE_KEY` (the existing Ed25519 PEM) and `CLI_RELEASE_UPLOAD_TOKEN` (the dedicated server upload token). Keep the existing signing key so installed clients trust later versions. The workflow publishes the six binaries and signed manifest to GitHub Release before updating OK Uptime metadata, so installers never see a version whose GitHub assets are not ready. It then verifies live metadata and every downloaded binary. macOS (Intel/Apple Silicon), Linux and Windows each have amd64 and arm64 builds.
 
 For a local release: `ruby script/release.rb release X.Y.Z /outside/repository/cli-update.pem`. Output defaults to `dist/releases`; the signing key must be outside the repository with permissions `0600`.

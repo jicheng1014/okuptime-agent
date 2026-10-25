@@ -29,8 +29,9 @@ printf '%s\n' "$checksum" | LC_ALL=C grep -Eq '^[0-9a-f]{64}$' || fail 'Invalid 
 printf '%s\n' "$version" | LC_ALL=C grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || fail 'Invalid release version'
 printf '%s\n' "$url" | LC_ALL=C grep -Eq '^https://www\.okuptime\.com/cli/releases/[A-Za-z0-9._/-]+$' || fail 'Invalid official download URL'
 case "$url" in */../*|*/./*) echo 'Invalid download path' >&2; exit 1;; esac
-status=$(curl --fail --silent --show-error --write-out '%{http_code}' --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 --max-filesize "$size" "$url" -o "$work/okuptime")
-[ "$status" = 200 ] || fail "Download HTTP $status; redirects are refused"
+url="https://github.com/jicheng1014/okuptime-agent/releases/download/${url#https://www.okuptime.com/cli/releases/}"
+status=$(curl --fail --silent --show-error --location --max-redirs 5 --proto-redir '=https' --write-out '%{http_code}' --proto '=https' --tlsv1.2 --connect-timeout 15 --max-time 180 --max-filesize "$size" "$url" -o "$work/okuptime")
+[ "$status" = 200 ] || fail "Download HTTP $status"
 [ "$(wc -c < "$work/okuptime" | tr -d ' ')" = "$size" ] || fail 'Size mismatch'
 if command -v sha256sum >/dev/null 2>&1; then actual=$(sha256sum "$work/okuptime" | cut -d ' ' -f 1); else actual=$(shasum -a 256 "$work/okuptime" | cut -d ' ' -f 1); fi
 [ "$actual" = "$checksum" ] || { echo 'Checksum mismatch; installation stopped' >&2; exit 1; }
